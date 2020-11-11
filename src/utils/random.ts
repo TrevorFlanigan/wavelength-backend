@@ -7,10 +7,16 @@ const getRandomWords = () => {
 };
 
 const getRandomTarget = () => {
-  return Math.floor(Math.random() * 100);
+  return Number.parseFloat((Math.random() * 100).toFixed(5));
 };
 
-const generateRoomData = (): RoomData => {
+type WordsAndTarget = {
+  leftWord: string;
+  rightWord: string;
+  goal: number;
+};
+
+const generateRoomData = (): WordsAndTarget => {
   let raw = [...getRandomWords(), getRandomTarget()];
   let roomData = {
     leftWord: raw[0] as string,
