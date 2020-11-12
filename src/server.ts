@@ -73,10 +73,12 @@ io.on("connection", (client: Socket) => {
           leftTeam: leftTeam,
           leftPsychics: new Set<string>().add(client.id),
           leftTurn: true,
+          currPsychic: "",
           rightPsychics: new Set<string>(),
           rightTeam: new Map<string, string>(),
+          leftScore: 0,
+          rightScore: 0
         };
-        console.log(data);
         roomData.set(roomName, data);
       }
       //Room already exists
@@ -85,6 +87,8 @@ io.on("connection", (client: Socket) => {
         updateData.userList.set(client.id, name);
         roomData.set(roomName, updateData);
         data = updateData;
+
+        /** Handler for joining mid-game, adds user to list of available psychics */
         if (data.leftTeam.size <= data.rightTeam.size) {
           data.leftTeam.set(client.id, name);
           data.leftPsychics.add(client.id);
@@ -97,6 +101,7 @@ io.on("connection", (client: Socket) => {
       }
       let formatData = {
         ...data,
+        currPsychic: data.userList.get(data.currPsychic),
         userList: Array.from(data.userList.values()),
         leftTeam: Array.from(data.leftTeam.values()),
         rightTeam: Array.from(data.rightTeam.values()),
@@ -109,6 +114,8 @@ io.on("connection", (client: Socket) => {
         formatData.leftTeam,
         formatData.rightTeam
       );
+      console.log(formatData);
+
       callback(formatData, currTeam);
     }
   );
@@ -146,31 +153,61 @@ io.on("connection", (client: Socket) => {
     let startPsychic = getRandomItem(room.leftPsychics);
     room.leftPsychics.delete(startPsychic);
     room.leftTurn = true;
+    room.currPsychic = startPsychic;
+    console.log(room.currPsychic);
+    let currPsychicName = room.userList.get(room.currPsychic);
     roomData.set(roomName, room);
 
     io.to(roomName).emit("startedgame", room.gameState);
-    console.log(startPsychic);
     io.to(startPsychic).emit("youarepsychic");
-    io.to(roomName).emit(
-      "psychicchosen",
-      room.leftTurn,
-      room.leftTeam.get(startPsychic)
-    );
+    io.to(roomName).emit("psychicchosen", room.leftTurn, currPsychicName);
   });
 
-  client.on("disconnect", (roomName) => {
+  client.on("guess", (roomName, value) => {
+    let room = roomData.get(roomName) as RoomData;
+    let {gameState, goal} = room;
+    let diff = Math.abs(goal - value);
+    
+    let points;
+    if (diff >= 0 && diff <= 2) points = 4;
+    else if (diff > 2 && diff <= 12) points = 3;
+    else if (diff > 12 ) 
+  })
+  client.on("changevalue", (roomName, value) => {
+    io.to(roomName).emit("valuechanged", value);
+  });
+
+  client.on("disconnect", () => {
     if (!roomData.get(currRoom)) return;
     let data = roomData.get(currRoom) as RoomData;
+
+    if (data.currPsychic == client.id) {
+      console.log("Psychic Left!");
+      //handle psychic left
+    }
+
     if (data.userList.size <= 1) {
-      roomData.delete(currRoom);
-      logger.info(`${currRoom} has been deleted`);
+      setTimeout(() => {
+        if (data.userList.size <= 1) {
+          roomData.delete(currRoom);
+          logger.info(`${currRoom} has been deleted!`);
+        }
+      }, 1);
+      data.userList.delete(client.id);
+      data.leftTeam.delete(client.id);
+      data.rightTeam.delete(client.id);
+      data.leftPsychics.delete(client.id);
+      data.rightPsychics.delete(client.id);
+      roomData.set(currRoom, data);
+
+      logger.info(`${currRoom} has been emptied!`);
     } else {
       console.log(data);
       data.userList.delete(client.id);
       data.leftTeam.delete(client.id);
       data.rightTeam.delete(client.id);
-
-      console.log(Array.from(data.userList.values()));
+      data.leftPsychics.delete(client.id);
+      data.rightPsychics.delete(client.id);
 
       io.to(currRoom).emit(
         "updateteams",
@@ -182,7 +219,6 @@ io.on("connection", (client: Socket) => {
         Array.from(data.userList.values())
       );
       roomData.set(currRoom, data);
-      console.log(data);
     }
   });
 });
