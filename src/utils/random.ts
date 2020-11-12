@@ -8,7 +8,7 @@ const getRandomWords = () => {
 
 const getRandomTarget = () => {
   return Number.parseFloat((Math.random() * 100).toFixed(5));
-  // return 49.99999;
+  // return 50;
 };
 
 type WordsAndTarget = {

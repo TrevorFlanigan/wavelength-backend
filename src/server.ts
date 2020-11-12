@@ -68,6 +68,7 @@ io.on("connection", (client: Socket) => {
         userList.set(client.id, name);
         data = {
           ...wordsAndTarget,
+          maxScore: 10,
           userList: userList,
           gameState: GameState["NOT_STARTED"],
           leftTeam: leftTeam,
@@ -77,7 +78,7 @@ io.on("connection", (client: Socket) => {
           rightPsychics: new Set<string>(),
           rightTeam: new Map<string, string>(),
           leftScore: 0,
-          rightScore: 0
+          rightScore: 0,
         };
         roomData.set(roomName, data);
       }
@@ -114,7 +115,6 @@ io.on("connection", (client: Socket) => {
         formatData.leftTeam,
         formatData.rightTeam
       );
-      console.log(formatData);
 
       callback(formatData, currTeam);
     }
@@ -132,10 +132,14 @@ io.on("connection", (client: Socket) => {
       update.leftTeam.set(client.id, name);
       update.rightTeam.delete(client.id);
       update.rightPsychics.delete(client.id);
+      update.leftTeam.set(client.id, name);
+      update.leftPsychics.add(client.id);
     } else {
       update.rightTeam.set(client.id, name);
       update.leftTeam.delete(client.id);
       update.leftPsychics.delete(client.id);
+      update.rightTeam.set(client.id, name);
+      update.rightPsychics.add(client.id);
     }
     roomData.set(roomName, update);
     io.to(roomName).emit(
@@ -147,34 +151,186 @@ io.on("connection", (client: Socket) => {
     callback();
   });
 
-  client.on("startgame", (roomName) => {
+  client.on("startgame", (roomName, maxScore) => {
     let room = roomData.get(roomName) as RoomData;
+    room.maxScore = maxScore;
     room.gameState = GameState["TEAM1_GUESS"];
     let startPsychic = getRandomItem(room.leftPsychics);
     room.leftPsychics.delete(startPsychic);
     room.leftTurn = true;
     room.currPsychic = startPsychic;
-    console.log(room.currPsychic);
     let currPsychicName = room.userList.get(room.currPsychic);
     roomData.set(roomName, room);
 
-    io.to(roomName).emit("startedgame", room.gameState);
+    io.to(roomName).emit("setgamestate", room.gameState);
     io.to(startPsychic).emit("youarepsychic");
     io.to(roomName).emit("psychicchosen", room.leftTurn, currPsychicName);
   });
 
   client.on("guess", (roomName, value) => {
     let room = roomData.get(roomName) as RoomData;
-    let {gameState, goal} = room;
+    let { gameState, goal, leftTurn } = room;
+    if (
+      gameState !== GameState["TEAM1_GUESS"] &&
+      gameState !== GameState["TEAM2_GUESS"]
+    )
+      return;
     let diff = Math.abs(goal - value);
-    
-    let points;
+
+    let points = 0;
     if (diff >= 0 && diff <= 2) points = 4;
-    else if (diff > 2 && diff <= 12) points = 3;
-    else if (diff > 12 ) 
-  })
+    else if (diff > 2 && diff <= 6) points = 3;
+    else if (diff > 6 && diff <= 10) points = 2;
+
+    if (leftTurn) room.leftScore += points;
+    else room.rightScore += points;
+
+    let newGameState = gameState + 1;
+    room.gameState = newGameState;
+    roomData.set(roomName, room);
+
+    /** Switches to TEAMX_STEAL
+     * Psychic stays the same.
+     * Guess button is deactivated.
+     * Input slider is deactivated.
+     * Left/Right buttons activated.
+     */
+    io.to(roomName).emit("updatestate", newGameState);
+    // io.to(roomName).emit(
+    //   "updatescore",
+    //   room.leftScore,
+    //   room.rightScore,
+    //   newGameState
+    // );
+  });
+
+  client.on("steal", (roomName, direction, value) => {
+    let room = roomData.get(roomName) as RoomData;
+    if (
+      room.gameState !== GameState["TEAM1_STEAL"] &&
+      room.gameState !== GameState["TEAM2_STEAL"]
+    )
+      return;
+    let points = 0;
+    if (direction === "left" && value > room.goal) {
+      points = 1;
+    } else if (direction === "right" && value < room.goal) {
+      points = 1;
+    }
+
+    if (room.leftTurn) room.rightScore += points;
+    else room.leftScore += points;
+
+    let newGameState = room.gameState + 1;
+    room.gameState = newGameState;
+    roomData.set(roomName, room);
+
+    io.to(roomName).emit("updatestate", newGameState);
+    // io.to(roomName).emit("updatescore", room.leftScore, room.rightScore);
+  });
+
   client.on("changevalue", (roomName, value) => {
     io.to(roomName).emit("valuechanged", value);
+  });
+
+  client.on("show", (roomName) => {
+    let room = roomData.get(roomName) as RoomData;
+    io.to(roomName).emit("showingtarget");
+    io.to(roomName).emit("updatescore", room.leftScore, room.rightScore);
+  });
+
+  client.on("continue", (roomName) => {
+    let room = roomData.get(roomName) as RoomData;
+
+    if (
+      room.gameState !== GameState["TEAM1_END"] &&
+      room.gameState !== GameState["TEAM2_END"]
+    )
+      return;
+    room.leftTurn = !room.leftTurn;
+    if (room.gameState === GameState["TEAM1_END"]) {
+      room.gameState = GameState["TEAM2_GUESS"];
+    } else {
+      room.gameState = GameState["TEAM1_GUESS"];
+    }
+
+    if (room.leftScore >= room.maxScore || room.rightScore >= room.maxScore) {
+      room.gameState = GameState["GAME_OVER"];
+      logger.debug("Game should be over");
+      if (room.leftScore >= room.maxScore && room.rightScore >= room.maxScore) {
+        if (room.leftScore > room.rightScore) {
+          io.to(roomName).emit("winner", "left");
+        } else if (room.leftScore < room.rightScore) {
+          io.to(roomName).emit("winner", "left");
+        } else {
+          io.to(roomName).emit("winner", "tie");
+        }
+      } else if (room.leftScore >= room.maxScore) {
+        io.to(roomName).emit("winner", "left");
+      } else {
+        io.to(roomName).emit("winner", "right");
+      }
+      return;
+    }
+
+    let wordsAndTarget = getRandomWordsAndTarget();
+    let nextPsychic;
+    if (room.leftTurn) {
+      if (room.leftPsychics.size == 0) {
+        room.leftPsychics = new Set<string>(room.leftTeam.keys());
+        console.log("Emptied, refilling");
+        console.log(room.leftPsychics);
+      }
+      nextPsychic = getRandomItem(room.leftPsychics);
+      room.leftPsychics.delete(nextPsychic);
+      room.currPsychic = nextPsychic;
+    } else {
+      if (room.rightPsychics.size == 0) {
+        room.rightPsychics = new Set<string>(room.rightTeam.keys());
+      }
+      nextPsychic = getRandomItem(room.rightPsychics);
+      room.rightPsychics.delete(nextPsychic);
+      room.currPsychic = nextPsychic;
+    }
+    let currPsychicName = room.userList.get(room.currPsychic);
+    room.leftWord = wordsAndTarget.leftWord;
+    room.rightWord = wordsAndTarget.rightWord;
+    room.goal = wordsAndTarget.goal;
+
+    roomData.set(roomName, room);
+    io.to(roomName).emit("setgamestate", room.gameState);
+    io.to(roomName).emit("generated", room);
+
+    io.to(nextPsychic).emit("youarepsychic");
+    io.to(roomName).emit("psychicchosen", room.leftTurn, currPsychicName);
+    console.log(room);
+  });
+
+  client.on("restart", (roomName) => {
+    let room = roomData.get(roomName) as RoomData;
+    let wordsAndTarget = getRandomWordsAndTarget();
+    room = {
+      ...room,
+      ...wordsAndTarget,
+      maxScore: 10,
+      gameState: GameState["NOT_STARTED"],
+      leftTurn: true,
+      currPsychic: "",
+      leftPsychics: new Set<string>(room.leftTeam.keys()),
+      rightPsychics: new Set<string>(room.rightTeam.keys()),
+      leftScore: 0,
+      rightScore: 0,
+    };
+    let formatData = {
+      ...room,
+      currPsychic: room.userList.get(room.currPsychic),
+      userList: Array.from(room.userList.values()),
+      leftTeam: Array.from(room.leftTeam.values()),
+      rightTeam: Array.from(room.rightTeam.values()),
+    };
+    io.to(roomName).emit("restarted", formatData);
+    io.to(roomName).emit("updatescore", 0, 0);
+    roomData.set(roomName, room);
   });
 
   client.on("disconnect", () => {
@@ -202,7 +358,6 @@ io.on("connection", (client: Socket) => {
 
       logger.info(`${currRoom} has been emptied!`);
     } else {
-      console.log(data);
       data.userList.delete(client.id);
       data.leftTeam.delete(client.id);
       data.rightTeam.delete(client.id);

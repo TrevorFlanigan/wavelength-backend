@@ -14,6 +14,7 @@ type RoomData = {
   rightPsychics: Set<string>;
   rightTeam: Map<string, string>;
   currPsychic: string;
+  maxScore: number;
 };
 
 export default RoomData;
