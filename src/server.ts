@@ -8,6 +8,7 @@ import { getRandomWordsAndTarget } from "./utils/random";
 import RoomData from "./types/RoomData";
 import { format } from "path";
 import GameState from "./types/GameState";
+import path from "path";
 const app = express();
 
 app.use((req, res, next) => {
@@ -28,9 +29,13 @@ app.get("/", (req, res) => {
   res.send("Express server");
 });
 
-// app.use("/rooms", rooms);
+// if (process.env.NODE_ENV === "production") {
+app.use(express.static(path.join(__dirname, "..", "dist")));
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "..", "dist", "index.html"));
+});
+// }
 
-// let roomSizes = new Map<string, number>();
 let roomData = new Map<string, RoomData>();
 const httpServer = http.createServer(app);
 
