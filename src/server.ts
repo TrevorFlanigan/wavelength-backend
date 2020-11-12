@@ -24,10 +24,10 @@ app.use(bodyParser.json());
 
 app.use(cors());
 
-app.get("/", (req, res) => {
-  logger.info("Hello");
-  res.send("Express server");
-});
+// app.get("/", (req, res) => {
+//   logger.info("Hello");
+//   res.send("Express server");
+// });
 
 // if (process.env.NODE_ENV === "production") {
 app.use(express.static(path.join(__dirname, "..", "dist")));
